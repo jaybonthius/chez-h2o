@@ -2,7 +2,7 @@
   (export
     start-server server? server-stop! server-options
     http-listener https-listener make-host
-    route handler streaming-handler loop-handler files compress encodings max-age
+    route handler streaming-handler loop-handler files compress encodings qualities max-age
     send-early-hints!
     response response? response-status response-headers response-body stream-response
     make-stream stream? stream-send! stream-close! stream-open?)
@@ -491,17 +491,13 @@
         (foreign-free c-name)
         (foreign-free names))))
 
-  ;; The qualities are those H2O's own configuration uses by default.
-  (define (register-compress! pathconf enabled)
+  (define (register-compress! pathconf item)
     (let ([args (foreign-alloc compress-args-size)])
       (c-memset args 0 compress-args-size)
       (foreign-set! 'size_t args compress-args-min-size 100)
-      (foreign-set! 'int args compress-args-gzip-quality
-        (if (encoding-enabled? enabled 'gzip) 1 -1))
-      (foreign-set! 'int args compress-args-brotli-quality
-        (if (encoding-enabled? enabled 'br) 1 -1))
-      (foreign-set! 'int args compress-args-zstd-quality
-        (if (encoding-enabled? enabled 'zstd) 3 -1))
+      (foreign-set! 'int args compress-args-gzip-quality (or (compress-item-gzip item) -1))
+      (foreign-set! 'int args compress-args-brotli-quality (or (compress-item-br item) -1))
+      (foreign-set! 'int args compress-args-zstd-quality (or (compress-item-zstd item) -1))
       (h2o-compress-register pathconf args)
       (foreign-free args)))
 

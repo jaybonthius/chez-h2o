@@ -2,7 +2,7 @@
   (export
     start-server server? server-stop! server-options
     http-listener https-listener make-host
-    route handler streaming-handler loop-handler files compress encodings max-age
+    route handler streaming-handler loop-handler files compress encodings qualities max-age
 
     request? request-method request-path request-query request-authority request-scheme
     request-version request-headers request-header request-client-address request-client-port

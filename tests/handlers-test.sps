@@ -163,6 +163,16 @@
   (check-raises syntax-violation?
     (expand '(server-options [workers 4] [workers 5]) (environment '(chezscheme) '(h2o)))))
 
+(test "a quality for an unknown encoding, or one given twice, fails to compile"
+  (check-raises
+    (lambda (c)
+      (and (syntax-violation? c)
+           (eq? 'qualities (condition-who c))
+           (string=? "unknown encoding" (condition-message c))))
+    (expand '(qualities [deflate 5]) (environment '(chezscheme) '(h2o))))
+  (check-raises syntax-violation?
+    (expand '(qualities [br 5] [br 6]) (environment '(chezscheme) '(h2o)))))
+
 (test "the client's address, port and scheme come with the request"
   (let ([words (split-words (reply-body (curl (string-append base "/client"))))])
     (check-equal? "127.0.0.1" (car words))

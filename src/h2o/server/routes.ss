@@ -75,7 +75,7 @@
 
 (define-record-type compress-item
   (nongenerative) (sealed #t)
-  (fields encodings))
+  (fields zstd br gzip))
 
 (define-record-type max-age-item
   (nongenerative) (sealed #t)
@@ -96,18 +96,68 @@
 
 (define-enumeration encoding (zstd br gzip) encodings)
 
+(define-record-type compress-qualities
+  (nongenerative) (sealed #t)
+  (fields zstd br gzip))
+
+;; The ranges are those H2O's own configuration accepts.
+(define (checked-qualities zstd br gzip)
+  (define (quality name value low high)
+    (cond
+      [(eq? value omitted) #f]
+      [(and (fixnum? value) (fx<= low value high)) value]
+      [else (assertion-violationf 'qualities "~s is not a quality from ~s to ~s for ~s"
+              value low high name)]))
+  (make-compress-qualities (quality 'zstd zstd 1 22) (quality 'br br 0 11) (quality 'gzip gzip 1 9)))
+
+(define-syntax qualities
+  (lambda (x)
+    (define names '(zstd br gzip))
+    (define (check-names given)
+      (let loop ([given given] [seen '()])
+        (unless (null? given)
+          (let ([name (syntax->datum (car given))])
+            (unless (memq name names)
+              (syntax-violation 'qualities "unknown encoding" x (car given)))
+            (when (memq name seen)
+              (syntax-violation 'qualities "encoding given twice" x (car given)))
+            (loop (cdr given) (cons name seen))))))
+    (syntax-case x ()
+      [(_ [name quality] ...)
+       (for-all identifier? #'(name ...))
+       (begin
+         (check-names #'(name ...))
+         (with-syntax ([(temporary ...) (generate-temporaries #'(name ...))])
+           (with-syntax ([(argument ...)
+                          (let ([given (map cons (syntax->datum #'(name ...)) #'(temporary ...))])
+                            (map (lambda (name)
+                                   (cond [(assq name given) => cdr] [else #'omitted]))
+                                 names))])
+             #'(let* ([temporary quality] ...) (checked-qualities argument ...)))))]
+      [_ (syntax-violation 'qualities "expected (qualities [encoding quality] ...)" x)])))
+
+;; The default qualities are those H2O's own configuration uses.
 (define compress
   (case-lambda
     [() (compress (encodings zstd br gzip))]
-    [(set)
+    [(set) (compress set (qualities))]
+    [(set chosen)
      (unless (and (enum-set? set)
                   (enum-set-subset? set (encodings zstd br gzip))
                   (pair? (enum-set->list set)))
        (assertion-violationf 'compress "~s is not a non-empty set of encodings" set))
-     (make-compress-item set)]))
-
-(define (encoding-enabled? set name)
-  (enum-set-member? name set))
+     (unless (compress-qualities? chosen)
+       (assertion-violationf 'compress "~s is not a set of qualities" chosen))
+     (let ([quality (lambda (name given default)
+                      (cond
+                        [(enum-set-member? name set) (or given default)]
+                        [given (assertion-violationf 'compress
+                                 "~s has a quality but is not one of the encodings" name)]
+                        [else #f]))])
+       (make-compress-item
+         (quality 'zstd (compress-qualities-zstd chosen) 3)
+         (quality 'br (compress-qualities-br chosen) 1)
+         (quality 'gzip (compress-qualities-gzip chosen) 1)))]))
 
 (define (max-age seconds)
   (unless (and (integer? seconds) (exact? seconds) (<= 0 seconds) (< seconds (expt 2 64)))
@@ -129,8 +179,7 @@
             [(null? items)
              (when (null? handlers)
                (assertion-violationf 'route "route ~s has no handler" path))
-             (new path (reverse handlers) (and compression (compress-item-encodings compression))
-               (and expiry (max-age-item-seconds expiry)))]
+             (new path (reverse handlers) compression (and expiry (max-age-item-seconds expiry)))]
             ;; H2O tries the handlers in order and only files passes a
             ;; request on.
             [(or (handler-item? (car items)) (files-item? (car items)))

@@ -61,7 +61,8 @@ Programs import `(h2o)` with `--libdirs /path/to/chez-h2o/build/obj/src`. The co
 | `(http-listener address port)`, `(https-listener address port certificate key)` | where to listen |
 | `(make-host names routes)`, `(route path item ...)` | hosts and path prefixes |
 | `(handler proc)`, `(streaming-handler proc)`, `(loop-handler proc)` | a procedure on a worker with the whole body, on a worker reading the body from a port, or on the loop thread |
-| `(files directory)`, `(compress [encodings])`, `(max-age seconds)` | static files with precompressed variants; gzip, br and zstd; `Cache-Control` |
+| `(files directory)`, `(compress [encodings [qualities]])`, `(max-age seconds)` | static files with precompressed variants; gzip, br and zstd; `Cache-Control` |
+| `(encodings name ...)`, `(qualities [name quality] ...)` | which of `zstd`, `br` and `gzip` to use; a quality per encoding (zstd 1–22, default 3; br 0–11, default 1; gzip 1–9, default 1), for example `(compress (encodings zstd br gzip) (qualities [br 5]))` |
 | `request-method`, `request-path`, `request-query`, `request-header`, `request-body`, `request-body-port`, `request-cookies`, `request-form`, `request-uploads`, … | what a handler receives |
 | `(response status headers body)`, `(stream-response status headers stream)`, `(send-early-hints! request headers)` | what a handler returns, and 103 responses before it |
 | `(make-stream [on-close])`, `stream-send!`, `stream-close!`, `stream-open?` | event streams, written from any thread |

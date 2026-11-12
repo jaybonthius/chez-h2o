@@ -187,6 +187,12 @@
   (check-raises assertion-violation? (handler 'echo))
   (check-raises assertion-violation? (max-age -1))
   (check-raises assertion-violation? (compress (encodings)))
+  (check-raises assertion-violation? (compress (encodings zstd gzip) (qualities [br 5])))
+  (check-raises assertion-violation? (compress (encodings br) 'fast))
+  (check-raises assertion-violation? (qualities [br 12]))
+  (check-raises assertion-violation? (qualities [gzip 0]))
+  (check-raises assertion-violation? (qualities [zstd 3.0]))
+  (compress (encodings br) (qualities [br 0]))
   (check-raises assertion-violation? (server-options [workers 0]))
   (check-raises assertion-violation?
     (start-server (list (http-listener "127.0.0.1" (+ port 1))) (list (make-host '("a") '())) 'none))

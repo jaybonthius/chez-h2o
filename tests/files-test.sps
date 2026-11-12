@@ -15,6 +15,21 @@
 (define long-text
   (apply string-append (map (lambda (i) (format "line ~a of a long text body\n" i)) (iota 200))))
 
+;; A text that repeats a pattern can come out smaller at a lower quality,
+;; so these words follow a pseudo-random sequence.
+(define varied-text
+  (let ([words '#("alpha" "beta" "gamma" "delta" "epsilon" "zeta" "eta" "theta" "iota" "kappa"
+                  "lambda" "mu" "nu" "xi" "omicron" "pi" "rho" "sigma" "tau" "upsilon" "phi"
+                  "chi" "psi" "omega")])
+    (let loop ([i 0] [x 1] [acc '()])
+      (if (= i 3200)
+          (apply string-append (reverse acc))
+          (let ([x (mod (+ (* x 1103515245) 12345) 2147483648)])
+            (loop (+ i 1) x
+              (cons* (if (= (mod i 8) 7) "\n" " ")
+                     (vector-ref words (mod (quotient x 65536) (vector-length words)))
+                     acc)))))))
+
 (define (text s) (response 200 '(("content-type" . "text/plain")) s))
 
 (define (events request)
@@ -31,6 +46,11 @@
           (route "/only-files" (files www))
           (route "/text" (handler (lambda (r) (text long-text))) (compress))
           (route "/gzip-only" (handler (lambda (r) (text long-text))) (compress (encodings gzip)))
+          (route "/varied" (handler (lambda (r) (text varied-text))) (compress))
+          (route "/best" (handler (lambda (r) (text varied-text)))
+            (compress (encodings zstd br gzip) (qualities [zstd 19] [br 11] [gzip 9])))
+          (route "/best-br" (handler (lambda (r) (text varied-text)))
+            (compress (encodings zstd br gzip) (qualities (br 11))))
           (route "/plain-text" (handler (lambda (r) (text long-text))))
           (route "/events" (loop-handler events) (compress))
           (route "/cached" (handler (lambda (r) (text "cached"))) (max-age 60))
@@ -79,6 +99,23 @@
   (check-equal? #f (reply-header (compressed "/gzip-only" "br") "content-encoding"))
   (check-equal? "gzip" (reply-header (compressed "/gzip-only" "gzip, br") "content-encoding"))
   (check-equal? #f (reply-header (compressed "/plain-text" "gzip") "content-encoding")))
+
+(define (size-sent path encoding)
+  (string->number
+    (run "curl" "-s" "--max-time" "10" "-o" "/dev/null" "-w" "%{size_download}"
+      "-H" (string-append "Accept-Encoding: " encoding) (string-append base path))))
+
+(test "compress uses the quality given for each encoding and the default for the rest"
+  (for-each
+    (lambda (encoding)
+      (check (< (size-sent "/best" encoding) (size-sent "/varied" encoding)))
+      (let ([r (compressed "/best" encoding)])
+        (check-equal? encoding (reply-header r "content-encoding"))
+        (check-equal? varied-text (reply-body r))))
+    '("gzip" "br" "zstd"))
+  (check-equal? (size-sent "/best" "br") (size-sent "/best-br" "br"))
+  (check-equal? (size-sent "/varied" "gzip") (size-sent "/best-br" "gzip"))
+  (check-equal? (size-sent "/varied" "zstd") (size-sent "/best-br" "zstd")))
 
 (test "compress encodes an event stream as it is sent"
   (for-each
