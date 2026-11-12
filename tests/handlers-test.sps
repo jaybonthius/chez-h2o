@@ -163,6 +163,16 @@
   (check-raises syntax-violation?
     (expand '(server-options [workers 4] [workers 5]) (environment '(chezscheme) '(h2o)))))
 
+(test "an unknown encoding, or one given twice, fails to compile"
+  (check-raises
+    (lambda (c)
+      (and (syntax-violation? c)
+           (eq? 'encodings (condition-who c))
+           (string=? "unknown encoding" (condition-message c))))
+    (expand '(encodings zstd deflate) (environment '(chezscheme) '(h2o))))
+  (check-raises syntax-violation?
+    (expand '(encodings br gzip br) (environment '(chezscheme) '(h2o)))))
+
 (test "a quality for an unknown encoding, or one given twice, fails to compile"
   (check-raises
     (lambda (c)

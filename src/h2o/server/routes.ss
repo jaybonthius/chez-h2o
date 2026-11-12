@@ -75,7 +75,7 @@
 
 (define-record-type compress-item
   (nongenerative) (sealed #t)
-  (fields zstd br gzip))
+  (fields order zstd br gzip))
 
 (define-record-type max-age-item
   (nongenerative) (sealed #t)
@@ -94,7 +94,27 @@
     (assertion-violationf 'files "~s is not a directory name" directory))
   (make-files-item directory))
 
-(define-enumeration encoding (zstd br gzip) encodings)
+(define-record-type encoding-list
+  (nongenerative) (sealed #t)
+  (fields names))
+
+(meta define encoding-names '(zstd br gzip))
+
+(define-syntax encodings
+  (lambda (x)
+    (syntax-case x ()
+      [(_ name ...)
+       (for-all identifier? #'(name ...))
+       (let loop ([given #'(name ...)] [seen '()])
+         (if (null? given)
+             #'(make-encoding-list '(name ...))
+             (let ([name (syntax->datum (car given))])
+               (unless (memq name encoding-names)
+                 (syntax-violation 'encodings "unknown encoding" x (car given)))
+               (when (memq name seen)
+                 (syntax-violation 'encodings "encoding given twice" x (car given)))
+               (loop (cdr given) (cons name seen)))))]
+      [_ (syntax-violation 'encodings "expected (encodings name ...)" x)])))
 
 (define-record-type compress-qualities
   (nongenerative) (sealed #t)
@@ -112,12 +132,11 @@
 
 (define-syntax qualities
   (lambda (x)
-    (define names '(zstd br gzip))
     (define (check-names given)
       (let loop ([given given] [seen '()])
         (unless (null? given)
           (let ([name (syntax->datum (car given))])
-            (unless (memq name names)
+            (unless (memq name encoding-names)
               (syntax-violation 'qualities "unknown encoding" x (car given)))
             (when (memq name seen)
               (syntax-violation 'qualities "encoding given twice" x (car given)))
@@ -132,7 +151,7 @@
                           (let ([given (map cons (syntax->datum #'(name ...)) #'(temporary ...))])
                             (map (lambda (name)
                                    (cond [(assq name given) => cdr] [else #'omitted]))
-                                 names))])
+                                 encoding-names))])
              #'(let* ([temporary quality] ...) (checked-qualities argument ...)))))]
       [_ (syntax-violation 'qualities "expected (qualities [encoding quality] ...)" x)])))
 
@@ -140,21 +159,19 @@
 (define compress
   (case-lambda
     [() (compress (encodings zstd br gzip))]
-    [(set) (compress set (qualities))]
-    [(set chosen)
-     (unless (and (enum-set? set)
-                  (enum-set-subset? set (encodings zstd br gzip))
-                  (pair? (enum-set->list set)))
-       (assertion-violationf 'compress "~s is not a non-empty set of encodings" set))
+    [(listed) (compress listed (qualities))]
+    [(listed chosen)
+     (unless (and (encoding-list? listed) (pair? (encoding-list-names listed)))
+       (assertion-violationf 'compress "~s is not a non-empty list of encodings" listed))
      (unless (compress-qualities? chosen)
        (assertion-violationf 'compress "~s is not a set of qualities" chosen))
      (let ([quality (lambda (name given default)
                       (cond
-                        [(enum-set-member? name set) (or given default)]
+                        [(memq name (encoding-list-names listed)) (or given default)]
                         [given (assertion-violationf 'compress
                                  "~s has a quality but is not one of the encodings" name)]
                         [else #f]))])
-       (make-compress-item
+       (make-compress-item (encoding-list-names listed)
          (quality 'zstd (compress-qualities-zstd chosen) 3)
          (quality 'br (compress-qualities-br chosen) 1)
          (quality 'gzip (compress-qualities-gzip chosen) 1)))]))

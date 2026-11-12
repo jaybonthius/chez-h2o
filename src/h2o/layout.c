@@ -91,7 +91,9 @@ int main(void)
     FIELD("req-res-content-length", h2o_req_t, res.content_length, 8);
     FIELD("req-res-headers", h2o_req_t, res.headers, 24);
     FIELD("req-res-mime-attr", h2o_req_t, res.mime_attr, 8);
+    FIELD("req-compress-hint", h2o_req_t, compress_hint, 1);
     SIZE("mime-attributes-size", h2o_mime_attributes_t);
+    FIELD("mime-attributes-is-compressible", h2o_mime_attributes_t, is_compressible, 1);
     FIELD("req-write-req-cb", h2o_req_t, write_req.cb, 8);
     FIELD("req-write-req-ctx", h2o_req_t, write_req.ctx, 8);
     FIELD("req-proceed-req", h2o_req_t, proceed_req, 8);
@@ -130,6 +132,9 @@ int main(void)
     CONSTANT("send-state-error", H2O_SEND_STATE_ERROR);
     CONSTANT("send-informational-mode-all", H2O_SEND_INFORMATIONAL_MODE_ALL);
     CONSTANT("expires-mode-max-age", H2O_EXPIRES_MODE_MAX_AGE);
+    CONSTANT("compress-hint-enable-gzip", H2O_COMPRESS_HINT_ENABLE_GZIP);
+    CONSTANT("compress-hint-enable-br", H2O_COMPRESS_HINT_ENABLE_BR);
+    CONSTANT("compress-hint-enable-zstd", H2O_COMPRESS_HINT_ENABLE_ZSTD);
     CONSTANT("file-flag-send-compressed", H2O_FILE_FLAG_SEND_COMPRESSED);
     CONSTANT("socket-flag-dont-read", H2O_SOCKET_FLAG_DONT_READ);
     CONSTANT("somaxconn", H2O_SOMAXCONN);

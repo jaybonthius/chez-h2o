@@ -55,7 +55,7 @@
 
   (define-record-type exchange
     (nongenerative) (sealed #t)
-    (fields server req (mutable live?) (mutable answered?) (mutable feed)))
+    (fields server req (mutable live?) (mutable answered?) (mutable feed) encoding))
 
   ;; A report must not raise: it runs inside callbacks from C and on
   ;; worker threads.
@@ -334,9 +334,9 @@
             (callable! server
               (foreign-callable __collect_safe
                 (callback server 0 (h2o-handler req)
-                  (handle-request! server
-                    (vector-ref (core-handlers core) (foreign-ref 'uptr h2o-handler handler-size))
-                    req)
+                  (let ([entry (vector-ref (core-handlers core)
+                                 (foreign-ref 'uptr h2o-handler handler-size))])
+                    (handle-request! server (car entry) (cdr entry) req))
                   0)
                 (uptr uptr) int)))
           (cons 'accept
@@ -446,21 +446,28 @@
     (set-option! 'size_t globalconf-http2-max-concurrent-streaming-requests
       (options-http2-max-concurrent-streaming-requests options)))
 
+  ;; One handler item can serve routes that compress differently, so each
+  ;; route's handlers get indices of their own.
   (define (register-hosts! server config hosts strict?)
-    (let ([handlers (make-eq-hashtable)] [order '()])
+    (let ([indices (make-eq-hashtable)] [entries '()] [count 0])
       (for-each
         (lambda (host)
           (for-each
             (lambda (r)
-              (for-each
-                (lambda (item)
-                  (when (and (handler-item? item) (not (hashtable-contains? handlers item)))
-                    (hashtable-set! handlers item (length order))
-                    (set! order (cons item order))))
-                (route-handlers r)))
+              (unless (hashtable-contains? indices r)
+                (hashtable-set! indices r
+                  (let loop ([items (route-handlers r)])
+                    (cond
+                      [(null? items) '()]
+                      [(handler-item? (car items))
+                       (let ([index count])
+                         (set! entries (cons (cons (car items) (route-compress r)) entries))
+                         (set! count (fx+ count 1))
+                         (cons index (loop (cdr items))))]
+                      [else (cons #f (loop (cdr items)))])))))
             (host-routes host)))
         hosts)
-      (core-handlers-set! (server-core server) (list->vector (reverse order)))
+      (core-handlers-set! (server-core server) (list->vector (reverse entries)))
       (for-each
         (lambda (host)
           (for-each
@@ -471,7 +478,7 @@
                     (assertion-violationf 'start-server "host ~s is given twice" name))
                   (when strict? (foreign-set! 'unsigned-8 hostconf hostconf-strict-match 1))
                   (for-each
-                    (lambda (r) (register-route! server hostconf r handlers))
+                    (lambda (r) (register-route! server hostconf r (hashtable-ref indices r #f)))
                     (host-routes host)))))
             (host-names host)))
         hosts)))
@@ -491,10 +498,12 @@
         (foreign-free c-name)
         (foreign-free names))))
 
+  (define compress-min-size 100)
+
   (define (register-compress! pathconf item)
     (let ([args (foreign-alloc compress-args-size)])
       (c-memset args 0 compress-args-size)
-      (foreign-set! 'size_t args compress-args-min-size 100)
+      (foreign-set! 'size_t args compress-args-min-size compress-min-size)
       (foreign-set! 'int args compress-args-gzip-quality (or (compress-item-gzip item) -1))
       (foreign-set! 'int args compress-args-brotli-quality (or (compress-item-br item) -1))
       (foreign-set! 'int args compress-args-zstd-quality (or (compress-item-zstd item) -1))
@@ -509,20 +518,20 @@
       (h2o-expires-register pathconf args)
       (foreign-free args)))
 
-  (define (register-route! server hostconf r handlers)
+  (define (register-route! server hostconf r indices)
     (let ([pathconf (h2o-config-register-path hostconf (route-path r) 0)])
       (for-each
-        (lambda (item)
+        (lambda (item index)
           (if (files-item? item)
               (register-files! pathconf (files-item-directory item))
               (let ([handler (h2o-create-handler pathconf (+ handler-size 8))])
                 (foreign-set! 'uptr handler handler-on-req (entry server 'request))
-                (foreign-set! 'uptr handler handler-size (hashtable-ref handlers item #f))
+                (foreign-set! 'uptr handler handler-size index)
                 (when (eq? (handler-item-kind item) 'streaming)
                   (foreign-set! 'unsigned-8 handler handler-supports-request-streaming
                     (logor handler-supports-request-streaming-mask
                       (foreign-ref 'unsigned-8 handler handler-supports-request-streaming)))))))
-        (route-handlers r))
+        (route-handlers r) indices)
       (when (route-compress r) (register-compress! pathconf (route-compress r)))
       (when (route-max-age r) (register-max-age! pathconf (route-max-age r)))))
 
@@ -622,13 +631,14 @@
   ;; connection would hang. Its exchange is ended too: no dispose hook will
   ;; mark it, and a proceed already posted for its body would reach a freed
   ;; request.
-  (define (handle-request! server item req)
-    (let ([exchange (make-exchange server req #t #f #f)])
+  (define (handle-request! server item compression req)
+    (let ([exchange (make-exchange server req #t #f #f
+                      (and compression (preferred-encoding req (compress-item-order compression))))])
       (guard (c [#t (report server c)
                     (unless (hashtable-contains? (core-exchanges (server-core server)) req)
                       (end-exchange! exchange)
                       (when (fx= 0 (foreign-ref 'int req req-res-status))
-                        (send-response! req internal-error)))])
+                        (send-response! req internal-error #f)))])
         (let ([proc (handler-item-procedure item)])
           (case (handler-item-kind item)
             [(loop)
@@ -717,7 +727,8 @@
        (exchange-answered?-set! exchange #t)
        (cond
          [(stream-response? result) (start-stream! server exchange result)]
-         [else (send-response! (exchange-req exchange) (or result internal-error))])]
+         [else (send-response! (exchange-req exchange) (or result internal-error)
+                 (exchange-encoding exchange))])]
       [else (drop-answer! server result)]))
 
   (define (drop-answer! server result)
@@ -769,6 +780,40 @@
           (h2o-mimemap-get-default-attributes (cdr content-type) attributes)
           (foreign-set! 'uptr req req-res-mime-attr attributes)))))
 
+  ;; Given a hint, H2O still checks that the client accepts the encoding,
+  ;; counting an element of Accept-Encoding only as a bare name; counting
+  ;; any other way here would leave a response uncompressed. So br;q=0 is
+  ;; not accepted, and neither is br;q=0.5.
+  (define (preferred-encoding req order)
+    (let ([accepted
+           (fold-left
+             (lambda (accepted header)
+               (if (string-ci=? (car header) "accept-encoding")
+                   (append (map string-trim-blanks (string-split (cdr header) #\,)) accepted)
+                   accepted))
+             '()
+             (request-header-list req))])
+      (find (lambda (name)
+              (exists (lambda (element) (string-ci=? element (symbol->string name))) accepted))
+            order)))
+
+  ;; H2O's compress filter takes br before zstd before gzip whatever the
+  ;; route lists, so the encoding chosen is given to it as a hint. A hint
+  ;; skips the filter's checks of the content type and of the minimum
+  ;; size, so they are made here.
+  (define (hint-encoding! req encoding size)
+    (when encoding
+      (when (= 0 (foreign-ref 'uptr req req-res-mime-attr))
+        (h2o-req-fill-mime-attributes req))
+      (when (and (not (fx= 0 (foreign-ref 'unsigned-8 (foreign-ref 'uptr req req-res-mime-attr)
+                               mime-attributes-is-compressible)))
+                 (or (not size) (>= size compress-min-size)))
+        (foreign-set! 'unsigned-8 req req-compress-hint
+          (case encoding
+            [(zstd) compress-hint-enable-zstd]
+            [(br) compress-hint-enable-br]
+            [(gzip) compress-hint-enable-gzip])))))
+
   ;; H2O keeps pointers to the reason and header strings until the response
   ;; is sent, so they are copied into the request's pool.
   (define (set-response-head! req status headers)
@@ -777,12 +822,13 @@
       (pool-copy (+ req req-pool) (c-bytes (reason-phrase status))))
     (add-headers! req headers))
 
-  (define (send-response! req r)
+  (define (send-response! req r encoding)
     (let ([status (response-status r)] [bv (response-body r)])
       (set-response-head! req status (response-headers r))
       (set-mime-attributes! req (response-headers r))
       (unless (bodiless-status? status)
         (foreign-set! 'size_t req req-res-content-length (bytevector-length bv)))
+      (hint-encoding! req encoding (bytevector-length bv))
       (h2o-send-inline req bv (bytevector-length bv))))
 
   (define (start-stream! server exchange r)
@@ -790,6 +836,7 @@
       (let ([req (exchange-req exchange)] [stream (stream-response-stream r)])
         (set-response-head! req (stream-response-status r) (stream-response-headers r))
         (set-mime-attributes! req (stream-response-headers r))
+        (hint-encoding! req (exchange-encoding exchange) #f)
         (hashtable-set! (core-streams core) req stream)
         (h2o-start-response req (core-generator core))
         (let-values ([(action parts)

@@ -52,6 +52,10 @@
           (route "/best-br" (handler (lambda (r) (text varied-text)))
             (compress (encodings zstd br gzip) (qualities (br 11))))
           (route "/plain-text" (handler (lambda (r) (text long-text))))
+          (route "/br-first" (handler (lambda (r) (text long-text))) (compress (encodings br zstd gzip)))
+          (route "/short" (handler (lambda (r) (text "short"))) (compress))
+          (route "/image" (handler (lambda (r) (response 200 '(("content-type" . "image/png")) long-text)))
+            (compress))
           (route "/events" (loop-handler events) (compress))
           (route "/cached" (handler (lambda (r) (text "cached"))) (max-age 60))
           (route "/cached-missing"
@@ -95,6 +99,26 @@
         (check-equal? long-text (reply-body r))))
     '("gzip" "br" "zstd")))
 
+(define chrome-encodings "gzip, deflate, br, zstd")
+
+(test "compress uses the first of its encodings that the client accepts"
+  (check-equal? "zstd" (reply-header (compressed "/text" chrome-encodings) "content-encoding"))
+  (check-equal? "br" (reply-header (compressed "/text" "br, gzip") "content-encoding"))
+  (check-equal? "gzip" (reply-header (compressed "/text" "gzip") "content-encoding"))
+  (check-equal? "br" (reply-header (compressed "/br-first" chrome-encodings) "content-encoding"))
+  (check-equal? "zstd" (reply-header (compressed "/br-first" "zstd, gzip") "content-encoding"))
+  (check-equal? long-text (reply-body (compressed "/br-first" chrome-encodings))))
+
+(test "compress skips an encoding given with parameters, such as q=0"
+  (check-equal? "br" (reply-header (compressed "/text" "zstd;q=0, br") "content-encoding"))
+  (check-equal? #f (reply-header (compressed "/text" "zstd;q=0") "content-encoding")))
+
+(test "compress leaves a small body or a type that does not compress as it is"
+  (let ([r (compressed "/short" chrome-encodings)])
+    (check-equal? #f (reply-header r "content-encoding"))
+    (check-equal? "short" (reply-body r)))
+  (check-equal? #f (reply-header (compressed "/image" chrome-encodings) "content-encoding")))
+
 (test "compress uses only the encodings it is given"
   (check-equal? #f (reply-header (compressed "/gzip-only" "br") "content-encoding"))
   (check-equal? "gzip" (reply-header (compressed "/gzip-only" "gzip, br") "content-encoding"))
@@ -119,10 +143,10 @@
 
 (test "compress encodes an event stream as it is sent"
   (for-each
-    (lambda (encoding)
+    (lambda (accepted encoding)
       (let* ([before (length (log-items streams))]
              [client (in-background (lambda () (curl "-N" "--compressed" "-H"
-                                                  (string-append "Accept-Encoding: " encoding)
+                                                  (string-append "Accept-Encoding: " accepted)
                                                   (string-append base "/events"))))])
         (check (wait-until 5000 (lambda () (> (length (log-items streams)) before))))
         (let ([stream (list-ref (log-items streams) before)])
@@ -133,7 +157,8 @@
           (check-equal? encoding (reply-header r "content-encoding"))
           (check-equal? (apply string-append (map (lambda (i) (format "data: event ~a\n\n" i)) (iota 20)))
             (reply-body r)))))
-    '("gzip" "br" "zstd")))
+    (list "gzip" "br" "zstd" chrome-encodings)
+    '("gzip" "br" "zstd" "zstd")))
 
 (test "max-age adds Cache-Control to successful responses of its route"
   (check-equal? "max-age=60" (reply-header (curl (string-append base "/cached")) "cache-control"))

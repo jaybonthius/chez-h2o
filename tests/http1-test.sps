@@ -189,6 +189,7 @@
   (check-raises assertion-violation? (compress (encodings)))
   (check-raises assertion-violation? (compress (encodings zstd gzip) (qualities [br 5])))
   (check-raises assertion-violation? (compress (encodings br) 'fast))
+  (check-raises assertion-violation? (compress '(br)))
   (check-raises assertion-violation? (qualities [br 12]))
   (check-raises assertion-violation? (qualities [gzip 0]))
   (check-raises assertion-violation? (qualities [zstd 3.0]))

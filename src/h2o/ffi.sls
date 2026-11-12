@@ -14,13 +14,15 @@
     generator-size generator-proceed generator-stop
     req-conn req-scheme req-authority req-method req-path req-query-at req-path-normalized
     req-version req-headers req-entity req-res-status req-res-reason
-    req-res-content-length req-res-headers req-res-mime-attr mime-attributes-size
+    req-res-content-length req-res-headers req-res-mime-attr req-compress-hint
+    mime-attributes-size mime-attributes-is-compressible
     req-write-req-cb req-write-req-ctx
     req-proceed-req req-pool
     url-scheme-name
     compress-args-size compress-args-min-size compress-args-gzip-quality
     compress-args-brotli-quality compress-args-zstd-quality
     expires-args-size expires-args-mode expires-args-max-age expires-mode-max-age
+    compress-hint-enable-gzip compress-hint-enable-br compress-hint-enable-zstd
     file-flag-send-compressed
     vector-entries vector-size header-size header-name header-value
     socket-on-close-cb socket-on-close-data
@@ -41,7 +43,7 @@
     h2o-evloop-socket-create h2o-evloop-socket-accept
     h2o-socket-read-start h2o-socket-read-stop h2o-socket-close
     h2o-socket-get-fd h2o-accept h2o-start-response h2o-send h2o-send-inline
-    h2o-send-informational h2o-mimemap-get-default-attributes
+    h2o-send-informational h2o-mimemap-get-default-attributes h2o-req-fill-mime-attributes
     h2o-add-header-by-str h2o-mem-alloc-pool h2o-mem-alloc-shared
     h2o-multithread-create-queue h2o-multithread-destroy-queue
     h2o-multithread-register-receiver h2o-multithread-unregister-receiver
@@ -126,6 +128,8 @@
   (define h2o-send-informational (foreign-procedure "h2o_send_informational" (uptr) void))
   (define h2o-mimemap-get-default-attributes
     (foreign-procedure "h2o_mimemap_get_default_attributes" (string uptr) void))
+  (define h2o-req-fill-mime-attributes
+    (foreign-procedure "h2o_req_fill_mime_attributes" (uptr) void))
   (define h2o-add-header-by-str
     (foreign-procedure "h2o_add_header_by_str"
       (uptr uptr uptr size_t int uptr uptr size_t) ssize_t))

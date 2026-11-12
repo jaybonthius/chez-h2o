@@ -62,10 +62,12 @@ Programs import `(h2o)` with `--libdirs /path/to/chez-h2o/build/obj/src`. The co
 | `(make-host names routes)`, `(route path item ...)` | hosts and path prefixes |
 | `(handler proc)`, `(streaming-handler proc)`, `(loop-handler proc)` | a procedure on a worker with the whole body, on a worker reading the body from a port, or on the loop thread |
 | `(files directory)`, `(compress [encodings [qualities]])`, `(max-age seconds)` | static files with precompressed variants; gzip, br and zstd; `Cache-Control` |
-| `(encodings name ...)`, `(qualities [name quality] ...)` | which of `zstd`, `br` and `gzip` to use; a quality per encoding (zstd 1–22, default 3; br 0–11, default 1; gzip 1–9, default 1), for example `(compress (encodings zstd br gzip) (qualities [br 5]))` |
+| `(encodings name ...)`, `(qualities [name quality] ...)` | which of `zstd`, `br` and `gzip` to use, in order of preference: a handler's response is compressed with the first one the client accepts, and `(compress)` means `(encodings zstd br gzip)`; a quality per encoding (zstd 1–22, default 3; br 0–11, default 1; gzip 1–9, default 1), for example `(compress (encodings zstd br gzip) (qualities [br 5]))` |
 | `request-method`, `request-path`, `request-query`, `request-header`, `request-body`, `request-body-port`, `request-cookies`, `request-form`, `request-uploads`, … | what a handler receives |
 | `(response status headers body)`, `(stream-response status headers stream)`, `(send-early-hints! request headers)` | what a handler returns, and 103 responses before it |
 | `(make-stream [on-close])`, `stream-send!`, `stream-close!`, `stream-open?` | event streams, written from any thread |
 | `set-cookie-header`, `time->http-date`, `http-date->time`, `query->alist`, `percent-encode`, … | helpers that need no server |
+
+An `Accept-Encoding` element counts only as a bare name, as H2O reads it: `br;q=0` is not accepted, and neither is `br;q=0.5`; `*` is ignored. Files served by `files` keep H2O's own order, br, then zstd, then gzip, for precompressed variants and for compression as they are sent.
 
 H2O accepts some framing that RFC 9112 forbids (two `Host` or `Content-Length` headers, bare LF line ends); run it behind a front end that normalises them where that matters.
